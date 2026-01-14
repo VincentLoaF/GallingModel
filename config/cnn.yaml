@@ -1,0 +1,98 @@
+# CNN-Hybrid PINN Configuration
+# This configuration is for the 1D CNN variant of the PINN model
+
+# Data settings (same as feedforward)
+data:
+  base_path: "/root/Documents/GallingModel"
+  temperatures: [165, 167.5, 170]
+  min_sliding_distance: 0.1  # mm, filter threshold for preprocessing
+
+# CNN Model architecture
+model:
+  type: "cnn"  # Specify CNN variant
+  conv_channels: [16, 32]  # Output channels for 1D conv layers
+  kernel_sizes: [5, 5]     # 5-timestep temporal windows for pattern capture
+  fc_hidden: [64, 32]      # Feedforward layers after convolution
+  dropout: 0.1             # Dropout probability
+
+  # Physics parameter initial values
+  physics_init:
+    k0: 1.0        # Baseline attachment rate [mass/cycle]
+    T0: 25.0       # Attachment temperature sensitivity [°C]
+    kw: 0.1        # Wear rate constant [dimensionless]
+    M0: 10.0       # Baseline critical mass for galling detachment
+    Tc: 45.0       # Critical mass temperature sensitivity [°C]
+    alpha: 0.2     # Retention fraction after galling detachment [0.1-0.3]
+
+# Training settings
+training:
+  # Stage 1: CNN pre-training (supervised learning)
+  stage1:
+    n_epochs: 50
+    batch_size: 32  # Same as feedforward (CNN is memory efficient)
+    learning_rate: 0.001
+    weight_decay: 1.0e-5
+    scheduler:
+      factor: 0.5          # LR reduction factor
+      patience: 10         # Epochs without improvement before LR reduction
+      min_lr: 1.0e-6       # Minimum learning rate
+
+    # Early stopping
+    early_stopping:
+      patience: 15         # Epochs without improvement before stopping
+      min_delta: 1.0e-4    # Minimum change to qualify as improvement
+
+  # Stage 2: Joint physics-informed training
+  stage2:
+    n_epochs: 100
+    learning_rate_nn: 0.0001       # Lower LR for NN (to preserve Stage 1 learning)
+    learning_rate_physics: 0.001   # Higher LR for physics parameters
+
+    # Loss function weights
+    loss_weights:
+      w_incycle: 1.0           # In-cycle COF prediction error
+      w_physics: 0.5           # Cycle-averaged COF consistency
+      w_regularization: 0.1    # Physics parameter regularization
+
+    # Gradient clipping
+    grad_clip_norm: 1.0
+
+    # Scheduler for NN
+    scheduler_nn:
+      factor: 0.7
+      patience: 15
+      min_lr: 1.0e-7
+
+    # Early stopping
+    early_stopping:
+      patience: 20
+      min_delta: 1.0e-5
+
+# Validation
+validation:
+  train_val_split: 0.8      # 80% train, 20% validation
+  random_seed: 42           # For reproducibility
+
+  # Stratified split by temperature (ensure each temp represented in train/val)
+  stratify_by_temp: true
+
+# Output and logging (separate directories for CNN)
+output:
+  model_save_dir: "results/cnn"
+  plot_save_dir: "results/cnn"
+  log_dir: "results/cnn"
+
+  # Checkpoint saving
+  save_every_n_epochs: 10
+  save_best_only: true       # Only save checkpoints that improve validation loss
+
+  # Logging
+  log_interval: 1            # Log every N epochs
+  print_physics_params_every: 10  # Print physics parameters every N epochs
+
+# Hardware
+device: "cuda"  # Use "cuda" if available, otherwise "cpu" (auto-detected)
+
+# Reproducibility
+seed: 42
+deterministic: true  # Use deterministic algorithms (may be slower)
