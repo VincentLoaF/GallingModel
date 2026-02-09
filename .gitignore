@@ -27,8 +27,8 @@ wheels/
 .ipynb_checkpoints
 
 # PyTorch
-*.pth
-*.pt
+# *.pth  # Commented out to track model checkpoints
+# *.pt   # Commented out to track model checkpoints
 
 # Data files (if large)
 # Uncomment if your data files are too large for git
@@ -37,7 +37,7 @@ wheels/
 # data/*.txt
 
 # Results and logs
-results/*/
+# results/*/  # Commented out to track model results
 logs/
 *.log
 
@@ -60,4 +60,4 @@ Thumbs.db
 .claude/
 
 # Generated images at root
-*.png
+# *.png  # Commented out to track result plots
