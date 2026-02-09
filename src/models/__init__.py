@@ -1,14 +1,20 @@
 """
-Model Implementations for Galling Prediction
+Model Implementations for Galling Prediction (REDESIGNED 2026-01-15)
 
-Three model variants:
-1. Feedforward PINN: Neural network + physics (19,271 params)
-2. CNN-Hybrid PINN: 1D CNN + physics (7,479 params)
-3. Pure Physics: Mechanistic model only (8 params, no NN)
+Current models (correct physics-based approach):
+1. InteractiveGallingModel: Yang's interactive friction + galling density (16 params)
+   - Best model: captures regime transitions and self-healing
+2. PhysicsGenerativeModel: Simpler physics model (deprecated)
+3. (Coming soon) GallingForecaster: LSTM for multi-step ahead prediction
+
+Deprecated models (archived - learned trivial μ = F_y/F_z):
+- GallingPINN (feedforward) - see archive/deprecated/
+- GallingPINN_CNN - see archive/deprecated/
+
+Legacy model (useful for comparison):
+- GallingPhysicsModel - Original pure physics
 """
 
-from .pinn_feedforward import GallingPINN
-from .pinn_cnn import GallingPINN_CNN
-from .physics_model import GallingPhysicsModel
+from .interactive_galling_model import InteractiveGallingModel
 
-__all__ = ['GallingPINN', 'GallingPINN_CNN', 'GallingPhysicsModel']
+__all__ = ['InteractiveGallingModel']

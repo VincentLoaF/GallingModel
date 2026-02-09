@@ -55,3 +55,9 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Claude Code
+.claude/
+
+# Generated images at root
+*.png
