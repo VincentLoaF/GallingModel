@@ -300,3 +300,166 @@ V8 trades a small 20-point LL gap for explicit physical interpretability. The do
 ## 9. Potential Simplification
 
 Since g0 ~ 0 and g_T ~ 0, these parameters could be removed to create a 13-parameter model without loss of performance. The tilt mechanism is redundant with barrier collapse for this dataset. However, the tilt parameters are retained for potential future use with datasets where asymmetric well preference (beyond barrier collapse) is relevant.
+
+---
+
+## 10. Development Log
+
+V8 went through 9 iterations to reach its final form. The reference target was V7's LL = +1328.61 on 867 transitions. The critical challenge was achieving good 170C simulation quality (observed mean = 0.840).
+
+### Iteration 1: Pure potential (13 parameters)
+
+**Setup:** Initial V8 implementation. All 5 mixture parameters derived from the quartic potential. Jump drift purely potential-derived: `d2 = -V'(mu,T) * tau`. Barrier via Arrhenius form `h(T) = h0 * exp(E_a / T_K)`.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1182.04 |
+| 170C sim mean | 0.48 (vs 0.84 observed) |
+| 25C sim mean | 0.70 (vs 0.20 observed) |
+
+**Diagnosis:** tau learned to 0.36 (jump amplification *less* than stay -- defeats purpose). g_T ~ 0 (no temperature dependence in tilt). The model used noise to explain everything rather than the potential. V'(mu) = 0 at well minima, so jump drift was uniform near wells and unable to distinguish clean vs galled states.
+
+---
+
+### Iteration 2: Exponential barrier decay (13 parameters)
+
+**Change:** Replaced Arrhenius barrier with exponential decay `h(T) = h0 * exp(-alpha_h * dT)`, giving much more temperature sensitivity over the 10-degree experimental range.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1272.51 |
+| 170C sim mean | ~0.44 |
+| 25C sim mean | 0.25 |
+
+**Diagnosis:** alpha_h learned ~0.67 (aggressive barrier collapse). g_T still converged to ~0. Barrier collapse destroyed the wells themselves at high T -- when h(T) -> 0, the entire quartic term vanishes, leaving only the linear tilt (also ~0). No restoring force toward mu_H.
+
+---
+
+### Iteration 3: Clamped alpha_h <= 0.3
+
+**Change:** Clamped alpha_h to max 0.3 to prevent barrier collapse, hoping to force the optimizer to use g_T (tilt) for temperature sensitivity instead.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1156.63 (worse) |
+| 25C sim mean | 0.48 |
+| 165C sim mean | 1.03 |
+| 170C sim mean | 0.28 |
+
+**Diagnosis:** Constraint caused the optimizer to find a completely different, worse local minimum. g_T = -0.008 (wrong sign), g0 = +0.059 (favors galled at baseline -- wrong), mu_H = 1.12 (too high). Fighting the optimizer's preferred solution made everything worse.
+
+---
+
+### Iteration 4: Minimum barrier floor h_min (14 parameters)
+
+**Change:** Added learnable floor: `h(T) = h_min + (h0 - h_min) * exp(-alpha_h * dT)` so the barrier never drops below h_min. Wells always exist with minimum depth.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1286.71 (best so far) |
+| 25C sim mean | 0.252 |
+| 167.5C sim mean | 0.529 |
+| 170C sim mean | 0.443 |
+
+**Diagnosis:** h_min learned to ~0 (optimizer chose to ignore the floor). alpha_h = 0.661, g_T ~ 0. The optimizer consistently killed the floor and tilt. This was diagnosed as a fundamental limitation, not a local minimum.
+
+---
+
+### Iteration 5: Fixed h_min clamp (14 parameters)
+
+**Change:** Made h_min non-learnable with fixed minimum value of 0.005.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1257 (worse than iter 4) |
+
+**Diagnosis:** Same pattern. The optimizer prefers a flat potential with wide jump noise over a structured double-well. Constraining further only hurt.
+
+---
+
+### Iteration 6: Removed alpha_h entirely (12 parameters)
+
+**Change:** Removed barrier temperature dependence. Only tilt g(T) allowed to vary with temperature.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1247 |
+| 25C sim mean | 0.57 |
+
+**Diagnosis:** h0 collapsed to ~0 (flat potential). g_T = -0.0005 (wrong sign, effectively zero). Without barrier dynamics, the model has no mechanism for temperature-dependent transitions.
+
+---
+
+### Iteration 7: Clamped h0 >= 0.05 (12 parameters)
+
+**Change:** Forced minimum barrier height to prevent flat-potential solutions.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1186 (worse) |
+
+**Diagnosis:** g_T finally turned slightly positive (+0.0004) but far too small to matter. The linear tilt mechanism is fundamentally insufficient -- V'(mu) = 0 at well minima, so tilt only affects the potential derivative away from equilibrium, not where data actually lives.
+
+**Key realization:** Analyzed V7's learned parameters and found V7's success came from `j_mu = -0.445` and `j_T = +0.034` -- independent linear terms in jump drift that operate regardless of the potential gradient. V8 needed the same mechanism.
+
+---
+
+### Iteration 8: Hybrid jump drift -- BREAKTHROUGH (15 parameters)
+
+**Change:** Added independent jump drift parameters: `d2 = -V'(mu,T) * tau + j_mu * mu + j_T * dT`. This gives V7-like mu- and T-dependent jump behavior while keeping the potential for stay dynamics and escape rates. Removed alpha_h to test the hybrid approach cleanly.
+
+| Metric | Value |
+|--------|-------|
+| LL | +1216 |
+| 25C sim mean | 0.199 (vs 0.205 observed) |
+| 170C sim mean | **0.794** (vs 0.840 observed) |
+
+**Key parameters:** j_mu = -0.496 (close to V7's -0.445), j_T = +0.041 (close to V7's +0.034).
+
+**Diagnosis:** Massive improvement in 170C simulation quality (from 0.44 to 0.79). The j_mu and j_T terms provided exactly what was missing. LL was lower than iteration 4, but simulation quality was far superior -- demonstrating that LL and trajectory quality are partially decoupled.
+
+---
+
+### Iteration 9: Hybrid + alpha_h restored -- FINAL (15 parameters)
+
+**Change:** Restored alpha_h for barrier temperature dependence alongside hybrid j_mu/j_T. Lowered initial learning rate to 0.005 (from 0.01). 8000 epochs with patience=1000.
+
+| Metric | Value |
+|--------|-------|
+| LL | **+1307.85** (98.4% of V7) |
+| 25C sim mean | 0.244 (vs 0.205 observed) |
+| 165C sim mean | 0.337 (vs 0.246 observed) |
+| 167.5C sim mean | 0.598 (vs 0.465 observed) |
+| 170C sim mean | **0.838** (vs 0.840 observed) |
+
+**Key parameters:** j_mu = -0.249, j_T = +0.023, alpha_h = 0.692, g_T ~ 0, mu_L = 0.200, mu_H = 0.802.
+
+**Assessment:** Best of both worlds. Barrier collapse (alpha_h) handles escape rate temperature dependence. Hybrid jump drift (j_mu, j_T) handles directional jump behavior. The potential provides physical structure while empirical terms fill the gap where V'(mu) = 0.
+
+---
+
+### Summary of All Iterations
+
+| Iter | Key Change | Params | LL | 170C Sim Mean | Outcome |
+|------|-----------|--------|-----|---------------|---------|
+| 1 | Pure potential (Arrhenius) | 13 | +1182 | 0.48 | Baseline |
+| 2 | Exponential barrier decay | 13 | +1273 | ~0.44 | Better LL, still poor sim |
+| 3 | Clamped alpha_h <= 0.3 | 13 | +1157 | 0.28 | Worse -- bad local minimum |
+| 4 | Added h_min floor | 14 | +1287 | 0.44 | Best LL yet, h_min ignored |
+| 5 | Fixed h_min clamp | 14 | +1257 | -- | Worse -- constraints hurt |
+| 6 | Removed alpha_h (tilt only) | 12 | +1247 | -- | h0 collapsed to 0 |
+| 7 | Clamped h0 >= 0.05 | 12 | +1186 | -- | Tilt insufficient |
+| 8 | **Hybrid j_mu/j_T** | 15 | +1216 | **0.79** | Breakthrough in sim quality |
+| 9 | **Hybrid + alpha_h** | 15 | **+1308** | **0.84** | Final: best LL + best sim |
+
+### Lessons Learned
+
+1. **V'(mu) = 0 at well minima** is the fundamental limitation of purely potential-derived dynamics. Since data concentrates near equilibria, the potential gradient provides no useful signal for jump drift there.
+
+2. **Don't fight the optimizer.** Clamping, constraining, and forcing parameters into desired ranges (iterations 3, 5, 7) consistently produced worse results than letting the optimizer find its preferred solution and adding flexibility where needed.
+
+3. **LL and simulation quality are partially decoupled.** Iteration 4 had LL = +1287 but 170C sim mean = 0.44. Iteration 8 had LL = +1216 but 170C sim mean = 0.79. Fitting individual transition probabilities well does not guarantee correct long-term trajectory statistics.
+
+4. **The tilt mechanism (g_T) is redundant with barrier collapse (alpha_h).** Across all 9 iterations, g_T consistently learned to ~0. The optimizer always prefers barrier collapse for temperature dependence.
+
+5. **Hybrid physics + empirical is the right architecture.** The potential provides interpretable structure (well positions, barrier dynamics, Kramers escape). The empirical terms (j_mu, j_T) fill the gap where physics is silent. Neither alone is sufficient.
